@@ -41,14 +41,16 @@ class TcgaBrcaRaw(torch.utils.data.Dataset):
         self.X_dtype = X_dtype
         self.y_dtype = y_dtype
         self.data = pd.read_csv(self.dic["input_preprocessed"])
+        # Ensure all data is numeric
+        self.data = self.data.apply(pd.to_numeric, errors='coerce').fillna(0)
 
     def __len__(self):
         return self.data.shape[0]
 
     def __getitem__(self, idx):
-        x = self.data.iloc[idx, 1:40]
-        y = self.data.iloc[idx, 40:42]
-        return (torch.tensor(x.values, dtype=self.X_dtype), torch.tensor(y.values, dtype=self.y_dtype))
+        x = self.data.iloc[idx, 1:40].values
+        y = self.data.iloc[idx, 40:42].values
+        return (torch.tensor(x, dtype=self.X_dtype), torch.tensor(y, dtype=self.y_dtype))
 
 
 class FedTcgaBrca(TcgaBrcaRaw):
@@ -104,6 +106,8 @@ class FedTcgaBrca(TcgaBrcaRaw):
         pid_list = list(pids["pid"])
         df2 = pd.read_csv(self.dic["input_preprocessed"])
         self.data = df2[df2["pid"].isin(pid_list)]
+        # Ensure all data is numeric
+        self.data = self.data.apply(pd.to_numeric, errors='coerce').fillna(0)
 
 
 if __name__ == "__main__":

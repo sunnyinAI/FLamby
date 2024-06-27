@@ -15,9 +15,7 @@ seaborn_styling(legend_fontsize=10, labelsize=12)
 pooled_training = FedTcgaBrca(train=True, pooled=True)
 _, yp = [
     e.numpy()
-    for e in iter(
-        dl(pooled_training, batch_size=len(pooled_training), shuffle=False)
-    ).next()
+    for e in next(iter(dl(pooled_training, batch_size=len(pooled_training), shuffle=False)))
 ]
 local_datasets = [
     FedTcgaBrca(center=i, pooled=False, train=True) for i in range(NUM_CLIENTS)
@@ -25,21 +23,19 @@ local_datasets = [
 local_ys = [
     [
         e.numpy()
-        for e in iter(
-            dl(local_datasets[i], batch_size=len(local_datasets[i]), shuffle=False)
-        ).next()
+        for e in next(iter(dl(local_datasets[i], batch_size=len(local_datasets[i]), shuffle=False)))
     ][1]
     for i in range(NUM_CLIENTS)
 ]
 
-
-# create a kmf object
+# Create a kmf object
 kmf = KaplanMeierFitter()
 
 # Pooled plot
 kmf.fit(yp[:, 1], yp[:, 0].astype("uint8"), label="KM Estimate for OS")
 ax = kmf.plot()
 ax.set_ylabel("Survival Probability")
+ax.set_title("Kaplan-Meier Estimate for Pooled Data")
 plt.savefig("pooled_km.pdf", bbox_inches="tight")
 
 plt.clf()
@@ -50,15 +46,16 @@ kms = [
 ]
 axs = [km.plot() for km in kms]
 axs[-1].set_ylabel("Survival Probability")
+axs[-1].set_title("Kaplan-Meier Estimates for Local Data")
 plt.savefig("local_kms.pdf", bbox_inches="tight")
 
-# Adding logrank test table
+# Adding log-rank test table
 columns = ["Local " + str(i) for i in range(NUM_CLIENTS)]
 paired_labels = list(itertools.combinations(columns, 2))
 print(paired_labels)
 paired_times = list(itertools.combinations(local_ys, 2))
 
-df_core = {col: [None] * len(columns) for col in columns}
+df_core = {col: ["-"] * len(columns) for col in columns}
 df_core["paired_with"] = columns
 df = pd.DataFrame(df_core)
 
@@ -67,18 +64,22 @@ for label_pair, times_pair in zip(paired_labels, paired_times):
         times_pair[0][:, 1],
         times_pair[1][:, 1],
         event_observed_A=times_pair[0][:, 0],
-        event_observed_B=times_pair[1][:, 0],
+        event_observed_B=times_pair[1][:, 0]
     ).p_value
     # We fill only the upper part of the symmetrical matrix
     if int(re.findall("(?<=Local )[0-9]{1}", label_pair[0])[0]) > int(
         re.findall("(?<=Local )[0-9]{1}", label_pair[1])[0]
     ):
-        df.loc[(df["paired_with"] == label_pair[1]), label_pair[0]] = pval
+        df.loc[(df["paired_with"] == label_pair[1]), label_pair[0]] = f"{pval:.4f}"
     else:
-        df.loc[(df["paired_with"] == label_pair[0]), label_pair[1]] = pval
+        df.loc[(df["paired_with"] == label_pair[0]), label_pair[1]] = f"{pval:.4f}"
 
 df = df.set_index("paired_with")
 df = df.drop(columns=["Local 0"])
 df.drop(df.tail(1).index, inplace=True)
+
+# Save LaTeX table to a file
+with open("logrank_test_table.tex", "w") as f:
+    f.write(df.to_latex(index=True))
 
 print(df.to_latex(index=True))
