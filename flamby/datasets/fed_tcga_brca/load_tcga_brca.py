@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 import torch
 
 from flamby.utils import accept_license
@@ -46,9 +47,14 @@ class TcgaBrcaRaw(torch.utils.data.Dataset):
         return self.data.shape[0]
 
     def __getitem__(self, idx):
-        x = self.data.iloc[idx, 1:40]
-        y = self.data.iloc[idx, 40:42]
-        return (torch.tensor(x.values, dtype=self.X_dtype), torch.tensor(y.values, dtype=self.y_dtype))
+        x = self.data.iloc[idx, 1:40].values
+        y = self.data.iloc[idx, 40:42].values
+
+        # Ensure all values are numeric and handle missing values
+        x = np.asarray(x, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32)
+
+        return (torch.tensor(x, dtype=self.X_dtype), torch.tensor(y, dtype=self.y_dtype))
 
 
 class FedTcgaBrca(TcgaBrcaRaw):
