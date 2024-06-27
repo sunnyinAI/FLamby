@@ -1,9 +1,9 @@
 import argparse
 import copy
-
 import numpy as np
 import pandas as pd
 import torch
+from prettytable import PrettyTable
 
 import flamby.strategies as strats
 from flamby.benchmarks.benchmark_utils import (
@@ -27,64 +27,26 @@ from flamby.benchmarks.conf import (
 from flamby.gpu_utils import use_gpu_idx
 
 
-def main(args_cli):
-    """This function will launch either all single-centric and the FL strategies
-    specified in the config file provided.
-    This will write the results in a csv file. The FL strategies will use
-    hyperparameters defined in the config file or default ones.
-    This function behavior can be changed by providing the keywords
-    --strategy or --single-centric-baseline which will run only the provided
-    strategy or single-centric-baseline alongside parameters input by the CLI.
-    One cannot change the parameters of the single-centric baseline which are
-    kept fixed.
-    Parameters
-    ----------
-    args_cli : A namespace of hyperparameters providing the ability to overwrite
-        the config provided to some extents.
+def print_results(df):
+    table = PrettyTable()
+    table.field_names = df.columns.tolist()
+    for row in df.itertuples(index=False):
+        table.add_row(row)
+    print(table)
 
-    Returns
-    -------
-    None
-    """
-    # Use the same initialization for everyone in order to be fair
+
+def main(args_cli):
     set_seed(args_cli.seed)
 
-    use_gpu = use_gpu_idx(args_cli.GPU, args_cli.cpu_only)
-    hyperparameters_names = [
-        "learning_rate",
-        "server_learning_rate",
-        "mu",
-        "optimizer-class",
-        "deterministic",
-    ]
-    hyperparameters_changed = [
-        e is not None
-        for e in [args_cli.learning_rate, args_cli.server_learning_rate, args_cli.mu]
-    ] + [args_cli.optimizer_class != "torch.optim.SGD", args_cli.deterministic]
-    if (args_cli.strategy is None) and any(hyperparameters_changed):
-        hyperparameters_changed = [
-            hyperparameters_names[i]
-            for i in range(len(hyperparameters_changed))
-            if hyperparameters_changed[i]
-        ]
-        raise ValueError(
-            "You cannot change one or several hyperparameters "
-            f"({hyperparameters_changed} in your case) in a global fashion for"
-            " all strategies, please use the keyword strategy to specify the "
-            "strategy you want to affect by writing: "
-            "--strategy [FedAvg, FedProx, FedAdam, FedAdagrad, FedYogi, "
-            "Cyclic, FedAvgFineTuning]"
-            ", otherwise modify the config file directly."
-        )
-    # Find a way to provide it through hyperparameters
-    run_num_updates = [100]
+    if args_cli.GPU:
+        gpu_ids = list(map(int, args_cli.GPU.split(',')))
+        device = torch.device(f"cuda:{gpu_ids[0]}" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device("cpu")
 
-    # ensure that the config provided by the user is ok
     config = check_config(args_cli.config_file_path)
-
     dataset_name = config["dataset"]
 
-    # get all the dataset specific handles
     (
         FedDataset,
         [
@@ -101,23 +63,23 @@ def main(args_cli):
         ],
     ) = get_dataset_args(dataset_name)
 
-    nrounds_list = [get_nb_max_rounds(num_updates) for num_updates in run_num_updates]
+    nrounds_list = [get_nb_max_rounds(100)]
 
     if args_cli.debug:
-        nrounds_list = [1 for _ in run_num_updates]
+        nrounds_list = [1 for _ in [100]]
         NUM_EPOCHS_POOLED = 1
 
     if args_cli.hard_debug:
-        nrounds_list = [0 for _ in run_num_updates]
+        nrounds_list = [0 for _ in [100]]
         NUM_EPOCHS_POOLED = 0
 
-    # We can now instantiate the dataset specific model on CPU
     if args_cli.use_ssl_features and dataset_name == "fed_camelyon16":
         global_init = Baseline(768)
     else:
         global_init = Baseline()
 
-    # We parse the hyperparams from the config or from the CLI if strategy is given
+    global_init = torch.nn.DataParallel(global_init, device_ids=gpu_ids).to(device)
+
     strategy_specific_hp_dicts = get_strategies(
         config, learning_rate=LR, args=vars(args_cli)
     )
@@ -131,29 +93,22 @@ def main(args_cli):
     }
     main_columns_names = ["Test", "Method", "Metric", "seed"]
 
-    # We might need to dynamically add additional parameters to the csv columns
     all_strategies_args = []
-    # get all hparam names from all the strategies used
     for strategy in strategy_specific_hp_dicts.values():
         all_strategies_args += [
             arg_names
             for arg_names in strategy.keys()
             if arg_names not in all_strategies_args
         ]
-    # column names used for the results file
     columns_names = list(set(main_columns_names + all_strategies_args))
 
     evaluate_func, batch_size_test, compute_ensemble_perf = set_dataset_specific_config(
         dataset_name, compute_ensemble_perf=False
     )
 
-    # We compute the number of local and ensemble performances we should have
-    # in the results dataframe
     nb_local_and_ensemble_xps = (NUM_CLIENTS + int(compute_ensemble_perf)) * (
         NUM_CLIENTS + 1
     )
-
-    # We init dataloader for train and test and for local and pooled datasets
 
     training_dls, test_dls = init_data_loaders(
         dataset=FedDataset,
@@ -173,22 +128,16 @@ def main(args_cli):
         collate_fn=collate_fn,
     )
 
-    # Check if some results are already computed
     results_file = get_results_file(config, path=args_cli.results_file_path)
     if results_file.exists():
         df = pd.read_csv(results_file)
-        # Update df if new hyperparameters added
         df = df.reindex(
             df.columns.union(columns_names, sort=False).unique(),
             axis="columns",
             fill_value=None,
         )
     else:
-        # initialize data frame with the column_names and no data if no csv was
-        # found
         df = pd.DataFrame(columns=columns_names)
-
-    # We compute the experiment plan given the config and user-specific hyperparams
 
     do_baselines, do_strategy, compute_ensemble_perf = init_xp_plan(
         NUM_CLIENTS,
@@ -198,18 +147,11 @@ def main(args_cli):
         compute_ensemble_perf,
     )
 
-    # We can now proceed to the trainings
-    # Pooled training
-    # We check if we have already the results for pooled
     index_of_interest = df.loc[
         (df["Method"] == "Pooled Training") & (df["seed"] == args_cli.seed)
     ].index
 
-    # There is no use in running the experiment if it is already found
     if (len(index_of_interest) < (NUM_CLIENTS + 1)) and do_baselines["Pooled"]:
-        # dealing with edge case that shouldn't happen
-        # If some of the rows are there but not all of them we redo the
-        # experiments
         if len(index_of_interest) > 0:
             df.drop(index_of_interest, inplace=True)
         m = copy.deepcopy(global_init)
@@ -256,7 +198,6 @@ def main(args_cli):
             pooled=True,
         )
 
-    # We check if we have the results for local trainings and possibly ensemble as well
     index_of_interest = df.loc[
         (df["Method"] == "Local 0") & (df["seed"] == args_cli.seed)
     ].index
@@ -269,8 +210,6 @@ def main(args_cli):
     )
 
     if len(index_of_interest) < nb_local_and_ensemble_xps:
-        # The fact that we are here means some local experiments are missing or
-        # we need to compute ensemble as well so we need to redo all local experiments
         y_true_dicts = {}
         y_pred_dicts = {}
         pooled_y_true_dicts = {}
@@ -280,9 +219,6 @@ def main(args_cli):
             index_of_interest = df.loc[
                 (df["Method"] == f"Local {i}") & (df["seed"] == args_cli.seed)
             ].index
-            # We do the experiments only if results are not found or we need
-            # ensemble performances AND this experiment is planned.
-            # i.e. we allow to not do anything else if the user specify
             if (
                 (len(index_of_interest) < (NUM_CLIENTS + 1)) or compute_ensemble_perf
             ) and do_baselines[f"Local {i}"]:
@@ -368,20 +304,16 @@ def main(args_cli):
                 pooled=True,
             )
 
-    # Strategies
-    # Needed for perfect reproducibility otherwise strategies are ordered randomly
     strats_names = list(strategy_specific_hp_dicts.keys())
     strats_names.sort()
     if do_strategy:
-        for idx, num_updates in enumerate(run_num_updates):
+        for idx, num_updates in enumerate([100]):
             for sname in strats_names:
                 print("========================")
                 print(sname.upper())
                 print("========================")
-                # Base arguments
                 m = copy.deepcopy(global_init)
                 bloss = BaselineLoss()
-                # We init the strategy parameters to the following default ones
                 args = {
                     "training_dataloaders": training_dls,
                     "model": m,
@@ -393,13 +325,9 @@ def main(args_cli):
                 }
                 if sname == "Cyclic":
                     args["rng"] = np.random.default_rng(args_cli.seed)
-                # We overwrite defaults with new hyperparameters from config
                 strategy_specific_hp_dict = strategy_specific_hp_dicts[sname]
-                # Overwriting arguments with strategy specific arguments
                 for k, v in strategy_specific_hp_dict.items():
                     args[k] = v
-                # We fill the hyperparameters dict for later use in filling
-                # the csv by filling missing column with nans
                 hyperparameters = {}
                 for k in all_strategies_args:
                     if k in args:
@@ -412,18 +340,12 @@ def main(args_cli):
                     df, hyperparameters, sname, num_updates
                 )
 
-                # An experiment is finished if there are num_clients + 1 rows
                 if len(index_of_interest) < (NUM_CLIENTS + 1):
-                    # Dealing with edge case that shouldn't happen
-                    # If some of the rows are there but not all of them we redo the
-                    # experiments
                     if len(index_of_interest) > 0:
                         df.drop(index_of_interest, inplace=True)
                     basename = get_logfile_name_from_strategy(
                         dataset_name, sname, num_updates, args
                     )
-
-                    # We run the FL strategy
 
                     s = getattr(strats, sname)(
                         **args, log=args_cli.log, log_basename=basename
@@ -462,11 +384,13 @@ def main(args_cli):
                         pooled=True,
                     )
 
+    print_results(df)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--GPU", type=int, default=0, help="GPU to run the training on (if available)"
+        "--GPU", type=str, default="0", help="Comma-separated list of GPUs to use (if available)"
     )
     parser.add_argument(
         "--cpu-only",
