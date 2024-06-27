@@ -15,7 +15,7 @@ import tqdm
 from joblib import Parallel, delayed
 from process_raw import clean_up_dicoms, convert_to_niftis
 
-# from sklearn.model_selection import train_test_split
+# from scikit-learn.model_selection import train_test_split
 from tciaclient import TCIAClient
 
 from flamby.utils import (

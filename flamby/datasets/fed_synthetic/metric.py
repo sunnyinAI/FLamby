@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.metrics import accuracy_score
+from scikit-learn.metrics import accuracy_score
 
 
 def metric(y_true, y_pred):

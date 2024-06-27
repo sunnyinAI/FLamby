@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn import metrics
+from scikit-learn import metrics
 
 
 def metric(y_true, logits):

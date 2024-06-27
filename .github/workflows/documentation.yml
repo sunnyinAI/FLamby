@@ -1,6 +1,6 @@
 name: Docs
 env:
-  SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL: True
+  scikit-learn_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL: True
 # Only run when pushing to main from a pull request
 on:
   push:

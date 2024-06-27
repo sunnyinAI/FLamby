@@ -5,7 +5,7 @@ import albumentations
 import pytest
 import torch
 import torch.utils.data as data
-from sklearn.metrics import accuracy_score
+from scikit-learn.metrics import accuracy_score
 from torch import nn
 from torch.utils.data import DataLoader as dl
 from torchvision import datasets

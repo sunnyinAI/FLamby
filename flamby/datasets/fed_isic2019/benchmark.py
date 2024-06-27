@@ -7,7 +7,7 @@ import time
 import albumentations
 import dataset
 import torch
-from sklearn import metrics
+from scikit-learn import metrics
 
 from flamby.datasets.fed_isic2019 import (
     BATCH_SIZE,

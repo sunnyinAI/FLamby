@@ -12,7 +12,7 @@ on:
     - cron: '30 3 * * 1'
 
 env:
-  SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL: True
+  scikit-learn_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL: True
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:

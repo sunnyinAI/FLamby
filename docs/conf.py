@@ -45,7 +45,7 @@ autodoc_mock_imports = [
     "numpy",
     "pandas",
     "pre-commit",
-    "sklearn",
+    "scikit-learn",
     "scipy",
     "torch",
     "torchvision",
